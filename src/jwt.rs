@@ -7,7 +7,7 @@ use openssl::ec::EcKey;
 use openssl::pkey::PKey;
 use ring::rand::SecureRandom;
 use ring::rand::SystemRandom;
-use ring::signature::{self, EcdsaKeyPair};
+use ring::signature::{Ed25519KeyPair};
 use serde::Serialize;
 
 use crate::errors::CbError;
@@ -36,7 +36,7 @@ pub(crate) struct Jwt {
     /// API Key provided by the service.
     api_key: String,
     /// Pre-initialized ECDSA signing key pair.
-    signing_key: Arc<EcdsaKeyPair>,
+    signing_key: Arc<Ed25519KeyPair>,
     /// RNG for signing.
     rng: SystemRandom,
 }
@@ -60,8 +60,14 @@ impl Jwt {
         let rng = SystemRandom::new();
 
         // Initialize the EcdsaKeyPair once with the RNG.
-        let signing_key = EcdsaKeyPair::from_pkcs8(Self::get_alg(), &secret, &rng)
-            .map_err(|why| CbError::BadSignature(why.to_string()))?;
+        // let signing_key = EcdsaKeyPair::from_pkcs8(Self::get_alg(), &secret, &rng)
+        //     .map_err(|why| CbError::BadSignature(why.to_string()))?;
+
+
+        let signing_key_bytes = STANDARD_NO_PAD.decode(&secret).unwrap();
+        let (seed, public_key) = signing_key_bytes.split_at(32);
+        let signing_key = Ed25519KeyPair::from_seed_and_public_key(seed, public_key)
+                .map_err(|why| CbError::BadSignature(why.to_string()))?;
 
         Ok(Self {
             api_key: api_key.to_string(),
@@ -113,11 +119,6 @@ impl Jwt {
         let raw =
             serde_json::to_vec(input).map_err(|why| CbError::BadSignature(why.to_string()))?;
         Ok(Self::to_base64(&raw))
-    }
-
-    #[inline]
-    fn get_alg() -> &'static signature::EcdsaSigningAlgorithm {
-        &signature::ECDSA_P256_SHA256_FIXED_SIGNING
     }
 
     /// Formats a private key into PKCS#8 format and parses it.
@@ -214,8 +215,7 @@ impl Jwt {
     fn sign_message(&self, message: &[u8]) -> CbResult<String> {
         let signature = self
             .signing_key
-            .sign(&self.rng, message)
-            .map_err(|why| CbError::BadSignature(why.to_string()))?;
+            .sign(message);
         Ok(Self::to_base64(signature.as_ref()))
     }
 
